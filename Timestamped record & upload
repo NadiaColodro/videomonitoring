@@ -1,0 +1,121 @@
+#-------------------------------------------------------------------------------------------------------
+# Variables - update as needed
+this_pi = 'raspi0'  # Enter identifying info for recording here (e.g. subject ID). Appears in file name and annotation text
+brightness = 50  # integer between 1-100. 50 is usually a good place to start
+contrast = 90    # integer between 1-100. 50 is usually a good place to start
+recording_length = 10  # number of secs. 1 hour = 3600 secs, 5 minutes = 300 secs
+rclone_config = 'lowell_lab:Recordings/'
+#---------------------------------------------------------------------------------------------------
+
+from picamera2 import Picamera2
+from picamera2.encoders import H264Encoder
+from picamera2.outputs import FileOutput
+from time import sleep
+import os
+import subprocess
+from datetime import datetime
+import logging
+from libcamera import controls
+
+today = datetime.now()
+d1 = today.strftime("%d_%m_%Y")
+d2 = today.strftime("%d_%m_%Y__%H_%M_%S")
+d3 = today.strftime("%d_%m_%Y__%H_%M")
+
+name = f"{this_pi}_{d3}"
+file = f"{name}.h264"
+path = f"/home/nadia/Videos/{file}"
+file2 = f"{name}.mp4"
+path2 = f"/home/nadia/Videos/{file2}"
+
+# Timestamp file for logging each frame's timestamp
+file3 = f"{name}_timestamps.txt"
+path3 = f"/home/nadia/Videos/{file3}"
+
+log_file = f"/home/nadia/Documents/Logs/{name}.txt"
+logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s:%(levelname)s:%(message)s')
+logging.info(f"{this_pi} {d1}")
+
+print("Starting recording")
+logging.info("Starting recording")
+
+# Initialize Picamera2
+camera = Picamera2(0)
+video_config = camera.create_video_configuration(main={"size": (1920, 1080), "format": "YUV420"})
+camera.configure(video_config)
+
+# Set autofocus control and frame duration (20 FPS)
+camera.set_controls({"AfMode": controls.AfModeEnum.Continuous})
+camera.set_controls({"FrameDurationLimits": (50000, 50000)})  # 50ms per frame = 20 FPS
+
+# Open timestamp file for writing
+with open(path3, 'w') as timestamp_file:
+    
+    try:
+        camera.start_preview()
+        # Start recording
+        output = FileOutput(path)
+        encoder = H264Encoder(bitrate=2000000)  # Adjust bitrate for quality
+        camera.start_recording(encoder, output, pts=path3)
+        
+        start_time = datetime.now()
+        
+        # Log timestamps for each frame
+        frame_time = 0.05  # 50ms per frame 
+        total_frames = int(recording_length / frame_time)
+        
+        for frame in range(total_frames):
+            current_time = (datetime.now() - start_time).total_seconds()
+            timestamp_file.write(f"Frame {frame+1}: {current_time} seconds\n")
+            timestamp_file.flush()  # Immediately write to file
+            sleep(frame_time)  # Sleep for frame time to match frame rate
+        
+        camera.stop_recording()
+        camera.stop_preview()
+        print("Finished recording")
+
+    except Exception as e:
+        logging.exception('Recording error found')
+        new_log_file = f"/home/nadia/Documents/Logs/FAILED_recording_{name}.txt"
+        os.rename(log_file, new_log_file)
+        raise
+
+print("Beginning conversion to MP4")
+logging.info("Beginning conversion to MP4")
+
+# Convert file to MP4 format. Requires command line subprocess
+from subprocess import CalledProcessError
+command = f"ffmpeg -i {path} -c:v copy {path2}"
+try:
+    output = subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True)
+except subprocess.CalledProcessError as e:
+    logging.info('MP4 conversion FAIL:\ncmd:{}\noutput:{}'.format(e.cmd, e.output))
+    new_log_file = f"/home/nadia/Documents/Logs/FAILED_mp4_conversion_{name}.txt"
+    os.rename(log_file, new_log_file)
+    raise
+
+print("Conversion finished... Starting MP4 upload")
+logging.info("Conversion finished... Starting MP4 upload")
+
+# Upload MP4 to cloud
+upload = f"rclone move {path2} {rclone_config} --contimeout=40m"
+os.system(upload)
+
+print("Removing H264 file")
+logging.info("Removing H264 file")
+
+try:
+    os.remove(path)
+    print("H264 video moved to trash")
+    logging.info("Videos moved to trash")
+except Exception as e:
+    logging.exception("H264 removal error")
+    new_log_file = f"/home/nadia/Documents/Logs/FAILED_delete_{name}.txt"
+    os.rename(log_file, new_log_file)
+    raise
+
+# Print remaining files in Video directory
+vids_list = os.listdir('/home/nadia/Videos/')
+vids = '\n'.join(vids_list)
+print("Remaining videos:" + vids)
+logging.info('Remaining videos:' + vids)
