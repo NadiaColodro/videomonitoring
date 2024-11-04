@@ -1,0 +1,60 @@
+from picamera2 import Picamera2
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Initialize camera
+picam2 = Picamera2()
+video_config = picam2.create_video_configuration({"size": (1920, 1080)})  # Set video size
+picam2.configure(video_config)
+
+# Set the framerate to 20fps ls
+picam2.set_controls({"FrameDurationLimits": (50000, 50000)})  # 20fps = 50,000 µs (microseconds) per frame
+
+# Start recording
+picam2.start()
+
+timestamps = []
+start_time = time.time()
+
+try:
+    while True:
+        # Capture frame and log timestamp
+        frame = picam2.capture_array()
+        current_time = time.time() - start_time
+        timestamps.append(current_time * 1000)  # Convert to milliseconds
+
+        # Stop condition or press CTRL+C to interrupt
+        if len(timestamps) >= 12000:  # Example: record 200 frames (~10 seconds at 20fps)
+            break
+
+finally:
+    picam2.stop()
+
+# Calculate the time intervals between frames
+time_intervals = np.diff(timestamps)  # Time differences between consecutive frames in milliseconds
+
+# Expected interval for 20fps is 50ms
+expected_interval = 50  # ms
+
+# Detect jitter: deviations from the expected 50ms
+jitter = time_intervals - expected_interval
+
+# Detect dropped frames (if intervals exceed a threshold)
+drop_threshold = expected_interval * 1.5  # Dropped if more than 1.5x expected interval
+dropped_frames = [i for i, interval in enumerate(time_intervals) if interval > drop_threshold]
+
+# Print dropped frame information
+print(f"Dropped frames: {dropped_frames}")
+
+# Plot the jitter (time intervals compared to 50ms)
+plt.figure()
+plt.plot(range(1, len(time_intervals) + 1), jitter, marker='o', label="Jitter (ms)")
+plt.axhline(y=0, color='r', linestyle='--', label=f'Expected Interval: {expected_interval}ms')
+plt.title("Frame Timing Jitter (Difference from Expected 50ms)")
+plt.xlabel("Frame Number")
+plt.ylabel("Jitter (ms)")
+plt.legend()
+plt.show()
+
+
