@@ -2,8 +2,8 @@ import os
 from gpiozero import Button
 
 # GPIO Setup
-TRIGGER_PIN = 17  # Replace with your GPIO pin number
-button = Button(TRIGGER_PIN) # Set up the GPIO pin
+TRIGGER_PIN = 17
+button = Button(TRIGGER_PIN)
 
 print("Waiting for GPIO trigger...")
 
@@ -11,6 +11,6 @@ print("Waiting for GPIO trigger...")
 button.wait_for_press()
 
 print("Trigger detected! Starting recording script...")
-os.system("python3 /home/nadia/Scripts/10fps_record_upload_save.py")  # Replace path
+os.system("python3 /home/nadia/Scripts/10fps_record_upload_save.py")
 
 
