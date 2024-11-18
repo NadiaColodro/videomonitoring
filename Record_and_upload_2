@@ -1,0 +1,110 @@
+#-------------------------------------------------------------------------------------------------------
+# Variables - update as needed
+this_pi = 'raspi0'  # Enter identifying info for recording here (e.g. subject ID)
+brightness = 50  # integer between 1-100
+contrast = 90    # integer between 1-100
+recording_length = 10  # duration in seconds (e.g., 3600 for 1 hour)
+rclone_config = 'lowell_lab:Recordings/'
+#---------------------------------------------------------------------------------------------------
+
+from picamera2 import Picamera2
+from picamera2.encoders import H264Encoder
+from picamera2.outputs import FfmpegOutput
+from time import sleep
+import os
+import subprocess
+from datetime import datetime
+import logging
+from libcamera import controls
+
+# Set date and file paths
+today = datetime.now()
+d1 = today.strftime("%d_%m_%Y")
+d2 = today.strftime("%d_%m_%Y__%H_%M_%S")
+d3 = today.strftime("%d_%m_%Y__%H_%M")
+
+name = f"{this_pi}_{d3}"
+file = f"{name}.h264"
+path = f"/home/nadia/Videos/{file}"
+file2 = f"{name}.mp4"
+path2 = f"/home/nadia/Videos/{file2}"
+
+# Timestamp file
+file3 = f"{name}_timestamps.txt"
+path3 = f"/home/nadia/Videos/{file3}"
+
+# Log file setup
+log_file = f"/home/nadia/Documents/Logs/{name}.txt"
+logging.basicConfig(filename=log_file, level=logging.INFO, format='%(asctime)s:%(levelname)s:%(message)s')
+logging.info(f"{this_pi} {d1}")
+
+print("Starting recording")
+logging.info("Starting recording")
+
+# Initialize Picamera2
+camera = Picamera2()
+video_config = camera.create_video_configuration(main={"size": (1920, 1080), "format": "YUV420"})
+camera.configure(video_config)
+
+# Set camera controls
+camera.set_controls({
+    "AfMode": controls.AfModeEnum.Continuous,
+    "Brightness": brightness,
+    "Contrast": contrast,
+    "FrameDurationLimits": (100000, 100000)  # 10 FPS = 100ms per frame
+})
+
+# Open timestamp file for logging
+with open(path3, 'w') as timestamp_file:
+    
+    try:
+        camera.start_preview()
+
+        # Set up encoder with ffmpeg for accurate timing
+        encoder = H264Encoder(bitrate=1000000)  # Lower bitrate
+        output = FfmpegOutput(path2)  # Directly save to MP4 format
+
+        # Start recording with frame-based timestamps
+        camera.start_recording(encoder, output)
+        start_time = datetime.now()
+        frame_time = 0.1  # 100ms per frame for 10 FPS
+        total_frames = int(recording_length / frame_time)
+        
+        # Log timestamps based on frames
+        for frame in range(total_frames):
+            current_time = (datetime.now() - start_time).total_seconds()
+            timestamp_file.write(f"Frame {frame+1}: {current_time:.3f} seconds\n")
+            timestamp_file.flush()  # Write immediately
+            sleep(frame_time)  # Control timing per frame
+        
+        camera.stop_recording()
+        camera.stop_preview()
+        print("Finished recording")
+
+    except Exception as e:
+        logging.exception('Recording error found')
+        new_log_file = f"/home/nadia/Documents/Logs/FAILED_recording_{name}.txt"
+        os.rename(log_file, new_log_file)
+        raise
+
+print("MP4 recording saved locally")
+logging.info("MP4 recording saved locally")
+
+# Upload MP4 to cloud
+print("Starting MP4 upload to cloud")
+logging.info("Starting MP4 upload to cloud")
+upload = f"rclone move {path2} {rclone_config} --contimeout=40m"
+os.system(upload)
+
+# Remove H264 file after uploading
+print("Removing H264 file")
+logging.info("Removing H264 file")
+try:
+    os.remove(path)
+    print("H264 video removed from local storage")
+    logging.info("H264 video removed from local storage")
+except Exception as e:
+    logging.exception("H264 removal error")
+    new_log_file = f"/home/nadia/Documents/Logs/FAILED_delete_{name}.txt"
+    os.rename(log_file, new_log_file)
+    raise
